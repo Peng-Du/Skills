@@ -80,13 +80,15 @@ When a switch, router or firewall shows "Error" status, it needs fan and power m
 1. In Details page, expand **Fan Options**
 2. Select **Exhaust Airflow** model (Exhaust Airflow fan)
 3. Click quantity cell to show dropdown
-4. Select maximum from the dropdown (e.g., 3 for S6520X-30HF-HI)
+4. **Always select the MAXIMUM quantity from the dropdown** - do not select the minimum or default value
 
 #### Step 4: Configure Power
 1. In Details page, expand **Power Options**
 2. Select **cheapest AC power** model
 3. Click quantity cell to show dropdown
-4. Select maximum from the dropdown, although the model is the cheapest (e.g., 2 for S5590-24X4YC-EI)
+4. **Always select the MAXIMUM quantity from the dropdown** - even if the error message says it needs only 1 minimum (e.g., if it suggests 2 for redundancy, select 2)
+
+**Important Rule: Always select the maximum available quantity for both fan and power modules, regardless of what the minimum requirement states. This ensures proper redundancy and configuration correctness.**
 
 #### Success Indicator
 - Status changes from Error to "Correct"
