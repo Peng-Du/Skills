@@ -17,6 +17,10 @@ Use this skill when:
 - Fixing "Error" status on switch configurations by modifying fan/power modules
 - Analyzing XHR network requests for the iConfig web application
 
+## References
+
+- `references/h3c_products.md` - H3C product catalog for device type identification (switch, router, firewall, wireless AC, wireless AP, optical module classification)
+
 ## Browser Navigation
 
 1. Navigate to `https://iconfig-cloud.h3c.com/iconfig/Index`
@@ -46,10 +50,11 @@ Use this skill when:
 - Click **2. Configuration**
 
 ### Add a Device
-- If the device is a switch, router, firewall or wireless AC, click **Standard** to enter Standard config
-- If the device is an optical module or wireless AP, click **Parts** to enter Parts config
-- Search for product, in the search box beside **Easy Choose** (e.g., "S6520X", or "S5590-24X4YC-EI")
-- Select the correct product from results
+- **Reference**: For device type identification, see `references/h3c_products.md`
+  - If the device is a switch, router, firewall or wireless AC, click **Standard** to enter Standard config
+  - If the device is an optical module or wireless AP, click **Parts** to enter Parts config
+- Search for product, in the search box beside **Easy Choose**, Enter directly, don't click **Easy Choose**
+- Select the correct product from results, keep the quantity as 1 here and edit later
 - Click **Add** to add to quotation
 - Remember the **Product model**
 - Click **OK** and then Edit the Name, Quantity and Notes immediately
@@ -88,7 +93,13 @@ When a switch, router or firewall shows "Error" status, it needs fan and power m
 3. Click quantity cell to show dropdown
 4. **Always select the MAXIMUM quantity from the dropdown** - even if the error message says it needs only 1 minimum (e.g., if it suggests 2 for redundancy, select 2)
 
-**Important Rule: Always select the maximum available quantity for both fan and power modules, regardless of what the minimum requirement states. This ensures proper redundancy and configuration correctness.**
+**Important Rule 1: Always select the maximum available quantity for both fan and power modules, regardless of what the minimum requirement states. This ensures proper redundancy and configuration correctness.**
+
+**Important Rule 2: Always keep the quantity as 1 when select the product and modify it after click Edit**
+
+**Important Rule 3: Always search in the box biside "Easy Choose", then ENTER, Do NOT click "Easy Choose"**
+
+**Important Rule 4: Do NOT use the search box below the product list**
 
 #### Success Indicator
 - Status changes from Error to "Correct"
