@@ -1,13 +1,13 @@
 ---
 name: iConfigSkill
-description: This skill should be used when operating the H3C Configuration Tool (新华三配置器) web application, including login, creating quotations, adding devices, editing configurations, and modifying fan/power modules via Chrome DevTools browser automation.
+description: This skill should be used when operating the H3C Configuration Tool (新华三配置器) web application, including login, creating quotations, adding devices, editing configurations, and modifying fan/power modules via chrome-devtools mcp automation.
 ---
 
 # iConfigSkill
 
 ## Overview
 
-iConfigSkill enables automated operations on the H3C Configuration Tool (H3C Configuration Tool) web application through Chrome DevTools browser automation. All operations are performed by interacting with the web UI directly.
+iConfigSkill enables automated operations on the H3C Configuration Tool (H3C Configuration Tool) web application through chrome-devtools mcp automation. All operations are performed by interacting with the web UI directly.
 
 ## When to Use This Skill
 
@@ -15,22 +15,19 @@ Use this skill when:
 - Operating the H3C iConfig system via browser automation
 - Creating quotations and managing devices
 - Fixing "Error" status on switch configurations by modifying fan/power modules
-- Analyzing XHR network requests for the iConfig web application
 
 ## References
 
 - `references/h3c_products.md` - H3C product catalog for device type identification (switch, router, firewall, wireless AC, wireless AP, optical module classification)
 
-## Browser Navigation
-
+### Login Steps
 1. Navigate to `https://iconfig-cloud.h3c.com/iconfig/Index`
 2. Open DevTools (F12) → Network panel
-3. Filter by `XHR` and look for `MauiServlet` requests
-4. Use `list_network_requests` and `get_network_request` tools to analyze
-5. Change language to English
-6. Click the tab of H3C user
-7. Wait 5s for the user to input Username and Password
-8. Then click Login automatically
+3. Use `list_network_requests` and `get_network_request` tools to analyze
+4. Change language to English
+5. Click the tab of H3C user
+6. Wait 5s for the user to input Username and Password
+7. Then click Login automatically
 
 ## Key UI Interactions
 
@@ -59,14 +56,20 @@ Use this skill when:
 - Remember the **Product model**
 - Click **OK** and then Edit the Name, Quantity and Notes immediately
 
-### Edit the Name, Quantity and Notes
-- Click **Edit** link in the device row
+### Edit the Quantity, Name and Notes
+- Click **Edit** link in the device row, Operation collumn
 - Modify fields in the dialog:
    - **Config name**: Change it to the **Product model**
    - **Sets**: Quantity
-   - **Site**: Location
    - **Configuration group notes**: Notes
 - Click **OK** to save
+
+### Product Search Strategy
+
+**Critical**: When searching for products, use product codes from `references/h3c_products.md`:
+- Search by exact product model number (e.g., "SFP-XG-SX-MM850-D" not "10Ge multimode")
+- If product name search fails, try searching by product code/model directly
+- Always verify the product code in h3c_products.md before searching
 
 ### Fixing Error Status (Configuring Fan/Power)
 
@@ -74,11 +77,13 @@ When a switch, router or firewall shows "Error" status, it needs fan and power m
 
 #### Step 1: Enter Config name, enter this configuration
 
+Click the "Config name" to enter this configuration
+
 #### Step 2: Enter Details Page
 1. In Components tab, find the product row
-2. **Critical: Click the Product ID** (e.g., 0235A4L7)
+2. **Critical: Click the Product Name** (e.g., S6520X-HI Switch #1)
    - **Do NOT click "product detail" text** - that won't expand the product tree
-   - Must click the number part of the Product ID to enter the Details page
+   - Must click the number part of the Product Name to enter the Details page
 3. This will expand the product tree and automatically enter the Details tab
 
 #### Step 3: Configure Fan
@@ -97,9 +102,22 @@ When a switch, router or firewall shows "Error" status, it needs fan and power m
 
 **Important Rule 2: Always keep the quantity as 1 when select the product and modify it after click Edit**
 
-**Important Rule 3: Always search in the box biside "Easy Choose", then ENTER, Do NOT click "Easy Choose"**
+**Important Rule 3: Always search in the box beside "Easy Choose", then ENTER, Do NOT click "Easy Choose"**
 
 **Important Rule 4: Do NOT use the search box below the product list**
 
+**Important Rule 5: Edit the Quantity, Name and Notes before Fixing Error Status**
+
 #### Success Indicator
 - Status changes from Error to "Correct"
+
+### Troubleshooting
+
+**Problem: Clicking Product ID opens a new tab instead of expanding details**
+- Solution: Right-click on the product row → select **Drill down** → **Details**
+
+**Problem: Element ref IDs become stale during navigation**
+- Solution: Take a fresh snapshot before each major interaction to get current ref IDs
+
+**Problem: Product search returns no results**
+- Solution: Use exact product model codes from `references/h3c_products.md`, not descriptive names
