@@ -81,9 +81,16 @@ Click the "Config name" to enter this configuration
 
 #### Step 2: Enter Details Page
 1. In Components tab, find the product row
-2. **Critical: Click the Product Name** (e.g., S6520X-HI Switch #1)
-   - **Do NOT click "product detail" text** - that won't expand the product tree
-   - Must click the number part of the Product Name to enter the Details page
+2. **Critical: Click the Product Name text** (e.g., "S6530X Switch #1")
+   - **Do NOT click "product detail" link** - that will not work correctly
+   - Must click the number part of the Product ID, which includes the BOM, to enter the Details page
+   - Use a script like this:
+   ● chrome-devtools - evaluate_script (MCP)(function: "() => { const tds = document.querySelectorAll('td'); for (let td of
+                                          tds) { if (td.textContent.includes('0235A4HC')) { const row =
+                                         td.closest('tr'); if (row) { const expandIcon =
+                                         row.querySelector('[class*=\"icon\"], [class*=\"tree\"], [class*=\"expand\"]');
+                                          if (expandIcon) { expandIcon.click(); return 'clicked expand icon'; } } } }
+                                         return 'not found'; }")
 3. This will expand the product tree and automatically enter the Details tab
 
 #### Step 3: Configure Fan
@@ -110,6 +117,13 @@ Click the "Config name" to enter this configuration
 
 #### Success Indicator
 - Status changes from Error to "Correct"
+
+### Key Navigation Finding
+
+**Entering Product Details Page**: When in the Components tab, to enter the Details page for a product:
+- Click directly on the **product name text**, usually with #1 (e.g., "S6530X Switch #1")
+- Do NOT click "product detail" - this does not work as expected
+- The page will navigate to `#extended_overview_menu` and display the Details tab with expanded options (Fan Options, Power Options, etc.)
 
 ### Troubleshooting
 
