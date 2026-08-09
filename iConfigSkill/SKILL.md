@@ -61,6 +61,7 @@ Use this skill when:
 - Modify fields in the dialog:
    - **Config name**: Change it to the **Product model**
    - **Sets**: Quantity
+   - **Site**: Specific site name, if required
    - **Configuration group notes**: Notes
 - Click **OK** to save
 
