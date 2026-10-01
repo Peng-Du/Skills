@@ -1,0 +1,7 @@
+{
+  "mcporter_name": "Cloudnet",
+  "api_key": "fill in here",
+  "shops": [
+    { "name": "Spain" }
+  ]
+}
