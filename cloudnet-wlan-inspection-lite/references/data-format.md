@@ -1,11 +1,18 @@
 # Inspection Data Format (input to `gen_report.py`)
 
-The LLM reads `step1.json` … `step5b.json`, extracts the fields below, writes the
-**analysis text**, and saves everything as one UTF-8 JSON file:
+The LLM reads the API results (direct MCP tool results, or `step*.json` files when
+using the mcporter transport), extracts the fields below, writes the **analysis
+text**, and saves everything as one UTF-8 JSON file **per site**:
 
 ```
-reports/Inspection_Data_<site>_<yyyyMMdd_HHmm>.json
+<out>/Inspection_Data_<site>_<yyyyMMdd_HHmm>.json
 ```
+
+**Missing data:** if an API call failed, set that top-level section (`ac[i]`
+metrics, `problem_distribution`, `access_success`, `reasoning`, `ap`) to `null`.
+The report then shows "Not collected" / "No data" for it. Put the error message
+in `analysis.notes`. Never fill a failed section with guessed or zero values:
+an empty list / zero count means "collected, nothing found".
 
 `gen_report.py` only formats. It computes ratings, the TOP 5 problem list and the
 access-rate statistics from the numbers you supply, so do not pre-format numbers
@@ -26,7 +33,8 @@ the `analysis` block, which must be based on the collected data only.
       "end": "2026-09-30 16:50:00.000",
       "timezone": "Europe/Madrid"
     },
-    "tool": "Cloudnet MCP via mcporter (cloudnet-wlan-inspection-lite)"
+    "tool": "Cloudnet MCP (cloudnet-wlan-inspection-lite)",
+    "language": "en"
   },
   "ac": [
     {
@@ -42,7 +50,8 @@ the `analysis` block, which must be based on the collected data only.
       "disk": 48,
       "speed_up_kbps": 52,
       "speed_down_kbps": 53,
-      "note": "No dedicated AC; this router acts as the AC (acSN in getApRegularMatch)."
+      "role": "Router acting as AC / gateway",
+      "note": "No dedicated AC; the router is inspected in the AC role. Cloud AP WA6636 reports its own SN as acSN (cloud-managed standalone)."
     }
   ],
   "problem_distribution": [
@@ -113,7 +122,8 @@ the `analysis` block, which must be based on the collected data only.
 | `region` | string | | step1 `shopList[].regionName` |
 | `inspection_time` | string | ✅ | Time the inspection ran (local time of `timezone`) |
 | `time_window.start/end/timezone` | string | ✅ | The window passed to step 3 |
-| `tool` | string | | Free text; defaults to "Cloudnet MCP via mcporter" |
+| `tool` | string | | Free text; defaults to "Cloudnet MCP" |
+| `language` | `en` \| `zh` | | Report language (overridden by `gen_report.py --lang`). Write all `analysis` prose in this language. |
 
 ### `ac` (array; may be empty)
 
@@ -126,17 +136,22 @@ One entry per AC inspected in step 2. Source: step1 `deviceList[]` + step2 `data
 | `address` | string | step2 `devAddress` |
 | `cpu` / `memory` / `disk` | number (%) | step2 `cpuRatio` / `memoryRatio` / `diskRatio` |
 | `speed_up_kbps` / `speed_down_kbps` | number | step2 `speed_up` / `speed_down` |
-| `note` | string | Optional remark, e.g. router acting as AC |
+| `role` | string | Optional, e.g. "AC", "Router acting as AC / gateway" |
+| `note` | string | Optional remark, e.g. which APs this device manages |
 
 `devModel` can contain an invisible zero-width character (U+200B); strip it.
 If the site has **no** AC, use `[]` and explain why in `analysis.notes`.
+If `getDeviceRunInfo` failed for a device (e.g. it is offline), keep the entry
+with `cpu`/`memory`/`disk` set to `null`.
 
 ### `problem_distribution` (array)
 
-Source: step3a `response.data[]`. **The API may return every category twice**;
-keep one entry per `type` (identical duplicates can be dropped). Use the `en`
-names. Categories with `times == 0` can be included or left out; the script
-ranks the TOP 5 with `times > 0` by itself.
+Source: 3A `response.data[]`. **The API may return every category twice, and the
+copies can have different counts.** Pass every entry as returned (or drop only
+exact duplicates); the script keeps the highest count per `type` and adds a
+note naming the categories whose copies differed. Use the `en` names (or `cn`
+for a Chinese report). Categories with `times == 0` can be included or left
+out; the script ranks the TOP 5 with `times > 0` by itself.
 
 ### `access_success.samples` (array)
 
@@ -149,16 +164,18 @@ the rating is then shown as "No data".
 
 Source: step4 `response.data.data[]`. `alarm_level` 3 = high risk, 2 = medium
 risk, anything lower = low risk. `type` ← `reasoningType`, `category` ←
-`reasoningCategory`. Translate `description` and `suggestion` to English. The
+`reasoningCategory`. Write `description` and `suggestion` in the report language. The
 script counts high/medium items from this list.
 
-### `ap` (required)
+### `ap` (`null` if not collected)
 
 | Field | Source |
 |---|---|
 | `online` / `offline` / `total` | step5a `data` |
 | `offline_aps` | step5b `detail[]` where `Ss == 2` → `apName` |
-| `list_complete` | `false` when step5b `totalCount` is larger than `len(detail)` (the offline AP list may be partial) |
+| `list_complete` | `false` when the merged 5B results (all `dim` queries, deduplicated by `apSN`) still have fewer entries than `totalCount` |
+
+`total` may include routers with built-in WLAN; mention it in `analysis.notes`.
 
 ### `analysis` (required; written by the LLM)
 
@@ -183,3 +200,9 @@ All report prose comes from here. Keep it factual and tied to the data above.
 | AP online rate | ≥98% | ≥95% | <95% |
 
 A site with `ap.total == 0` gets "No data" for the AP online rate.
+
+## Multi-site runs
+
+Write one data file per site and pass them all to one `gen_report.py` call
+(`--data-file` repeated). The script writes one report per site plus
+`Inspection_Summary_<timestamp>.md` with one row per site.

@@ -1,390 +1,214 @@
 ---
 name: cloudnet-wlan-inspection-lite
 description: |
-  Cloudnet WLAN wireless network inspection skill (Lite edition). Calls the Cloudnet MCP interfaces via mcporter and runs a 6-step inspection flow:
+  Cloudnet WLAN wireless network inspection skill (Lite edition). Inspects one, several or all Cloudnet sites through the Cloudnet MCP
+  interfaces (direct MCP tools when connected, mcporter CLI as fallback) and runs a 6-step flow:
   get site information → AC health → problem distribution and access success rate → Cloudnet problem reasoning → AP online rate → generate the inspection report.
-  Outputs the inspection report in English in both MD and DOCX formats, titled "Wireless Network O&M Inspection Report (Lite Edition)".
-  Suitable for quick day-to-day health checks.
-  Trigger words: inspection, lite inspection, WLAN inspection, wireless network inspection, cloudnet inspection.
-  Prerequisites: mcporter CLI + cloudnet MCP server configuration (API key authentication) + python-docx (for the DOCX report).
+  Outputs one MD + DOCX report per site (English or Chinese), plus a multi-site summary when several sites are inspected.
+  Titled "Wireless Network O&M Inspection Report (Lite Edition)" / "无线网络运维巡检报告（精简版）". Suitable for quick day-to-day health checks.
+  Trigger words: inspection, lite inspection, WLAN inspection, wireless network inspection, cloudnet inspection, 巡检, 巡检报告, 无线巡检.
+  Prerequisites: Cloudnet MCP tools in the session OR mcporter CLI + Cloudnet API key; python-docx for the DOCX report.
 ---
 
 # Cloudnet WLAN Inspection Skill (Lite Edition)
 
-> **Version: V0.0.3**
+> **Version: V0.1.0**
 >
-> 🎯 **Design principle: the LLM does data extraction and evaluation; scripts only handle report formatting and output (both MD and DOCX).**
+> 🎯 **Design principle: the LLM does data extraction and evaluation; scripts only compute ratings and format the reports (MD + DOCX).**
 >
-> 📂 **Paths:** `<skill-dir>` below is this skill's base directory (where this SKILL.md lives). `scripts/` and `references/` are under `<skill-dir>`; `reports/` is created in the current working directory.
+> 📂 **Paths:** `<skill-dir>` is this skill's base directory (where this SKILL.md lives). `scripts/` and `references/` are under `<skill-dir>`. `<out>` is the report directory: config `output_dir`, else `reports/` under the **project / working directory** (never inside `<skill-dir>`).
 
 ## Step 0: Pre-checks (must run first)
 
-### 0.1 Read the configuration file
+### 0.1 Read the configuration (optional file)
+
+`<skill-dir>/config.json` is optional. Every field has a fallback (see the field reference at the end; `config.example.json` shows all fields).
+
+⚠️ Never print the `api_key` value. Read the config with the key masked:
 
 ```bash
-# Read config.json in the skill root directory
-cat <skill-dir>/config.json
+python -c "import json;c=json.load(open(r'<skill-dir>/config.json',encoding='utf-8'));c['api_key']='***' if c.get('api_key') else '';print(c)"
 ```
 
-**config.json format:**
-```json
-{
-  "mcporter_name": "Cloudnet",
-  "api_key": "xxxxxxxx",
-  "timezone": "Asia/Shanghai",
-  "shops": [
-    { "name": "Site name" }
-  ]
-}
-```
+### 0.2 Choose the transport (in this order)
 
-> 💡 `shops` only needs `name` (the site name); the shopId is fetched automatically by the Step 1 API during the inspection.
->
-> 💡 `timezone` is optional (IANA name, default `Asia/Shanghai`). Set it to the **site's** timezone, e.g. `Europe/Madrid`; it is used for the Step 3 time window and passed to the APIs.
->
-> ⚠️ Never print the `api_key` value in the chat or logs.
+**A. Direct MCP tools (preferred).** If the session already has the Cloudnet MCP tools (any server whose tools include `getallshopsanddevofuser`, e.g. `mcp__<server>__getallshopsanddevofuser`; they may be deferred and need loading via ToolSearch first), call them directly. No mcporter, no API key, no step files. Tool results arrive in context; read `response.data` from them.
 
-If `api_key` is placeholder text (e.g. "fill in here"), prompt the user to fill in a real API key and then run the inspection again.
+**B. mcporter (fallback).** Only when A is unavailable:
+1. `mcporter --version` (≥ 0.9.0, else `npm install -g mcporter`).
+2. `mcporter config list`; if `mcporter_name` (default `Cloudnet`) is missing and `api_key` is a real key (not a placeholder), add it:
+   ```bash
+   mcporter config add <mcporter_name> <base_url>/mcp-server/api/sse --transport sse --header "Authorization=Bearer <API_KEY>" --scope home
+   ```
+   `<base_url>` = config `base_url`, default `https://cloudnet1.h3c.com`. `--scope home` keeps the key out of the project folder. If the key is missing or a placeholder, ask the user to fill it in (Cloudnet → Network Management → Settings → Open Platform).
+3. Every call goes through the wrapper, which saves clean JSON:
+   ```bash
+   python <skill-dir>/scripts/mcporter_call.py <mcporter_name> <tool> <out>/step<X>_<shopId>.json [key=value ...]
+   ```
+   Exit codes: `0` OK · `1` mcporter missing/failed · `2` API returned a non-zero `response.code` (file still saved; report the error). Use `key=value` arguments, never `--args '{json}'` (breaks under PowerShell), and pass no arguments to `getallshopsanddevofuser`.
 
-### 0.2 Check the mcporter CLI
+### 0.3 python-docx
 
-```bash
-mcporter --version
-```
-- Pass: ≥ 0.9.0 | Fail: prompt `npm install -g mcporter`
+`python -c "import docx; print('OK')"`. If missing, suggest `pip install python-docx` and continue with `--no-docx` (MD only).
 
-### 0.3 Check and configure the Cloudnet MCP connection
-
-**The only MCP address (production environment):**
-```
-https://cloudnet1.h3c.com/mcp-server/api/sse
-```
-
-```bash
-mcporter config list
-```
-- If a configuration matching `mcporter_name` already exists in the list → ✅ Pass
-- If it does not exist → configure it automatically:
-
-```bash
-mcporter config add <mcporter_name> https://cloudnet1.h3c.com/mcp-server/api/sse --transport sse --header "Authorization=Bearer <API_KEY>" --scope home
-```
-
-> 💡 `--scope home` stores the key in `~/.mcporter/mcporter.json`. Without it, mcporter writes `config/mcporter.json` under the current working directory, which can put the API key inside a project folder.
-
-Verify the connection with a real call (it must print `OK`):
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcporter_name> getallshopsanddevofuser reports/step1.json
-```
-
-### 0.4 Confirm the site to inspect
-
-Prefer the `shops` list in `config.json` (name field only):
-- Only 1 site → use it directly, no need to ask
-- Multiple sites → list them for the user to choose from
-- shops is empty → ask the user to enter a site name
-
-> ⚠️ Never assume a site name; it must come from an explicit source. **The shopId is obtained from the Step 1 API query and does not need to be pre-filled in config.json.**
-
-### 0.5 Check python-docx (for the DOCX report)
-
-```bash
-python -c "import docx; print('OK')"
-```
-- Pass: ✅ | Fail: prompt `pip install python-docx` (only affects DOCX output; the MD report can still be generated)
-
-### 0.6 Output the check results
+### 0.4 Output the check results
 
 ```
-✅ mcporter v0.9.0
-✅ Cloudnet MCP connection: <mcporter_name>
-✅ Site to inspect: XXX
-✅ python-docx
-
-All set. Starting the inspection.
+✅ Transport: direct MCP (<server>)   |   ✅ mcporter v0.x + connection <name>
+✅ python-docx                         |   ⚠️ python-docx missing → MD only
+✅ Language: en | zh   ✅ Output: <out>
 ```
 
-If any item fails, list each one with ❌ and how to fix it, and **do not continue**.
+Stop only if **no** transport works.
 
 ---
 
-## mcporter Calling Conventions (must read)
+## Step 1: Sites and devices (serial; must complete first)
 
-### Rule 1: Pass no arguments to tools that take no parameters
+**Tool:** `getallshopsanddevofuser` (no parameters).
 
-```bash
-# ✅ Correct
-mcporter call <mcp-name> getallshopsanddevofuser
+### 1.1 Resolve the sites to inspect
 
-# ❌ Wrong
-mcporter call <mcp-name> getallshopsanddevofuser --args '{}'
-```
+Priority: sites named in the user's request → config `shops[].name` → ask the user (list all sites from `shopList`).
+- "all sites" / "全部场所" or config `"shops": "all"` → every site in `shopList`.
+- Match names case-insensitively; a unique partial match (e.g. "Spain" → "Spain Office") is fine and must be stated in `analysis.notes`. Ambiguous or no match → list the candidates and ask.
+- Never invent a site; the `shopId` always comes from this API.
 
-### Rule 2: Use key=value format for tools that take parameters (PowerShell compatible)
+### 1.2 Timezone per site
 
-```bash
-# ✅ Correct
-mcporter call <mcp-name> getDeviceRunInfo devSN=210235A2G0B206000003
-mcporter call <mcp-name> getProblemDistribute shopId=2673243 "startTime=2026-05-19 00:00:00.000" "endTime=2026-05-19 10:00:00.000" timezone=Asia/Shanghai
-
-# ❌ Wrong — single-quoted JSON fails to parse under PowerShell
-mcporter call <mcp-name> getDeviceRunInfo --args '{"devSN":"210235A2G0B206000003"}'
-```
-
-### Rule 3: Save each API result as a separate JSON file
-
-> mcporter output contains a lot of schema information and is easily truncated in logs. **Use mcporter_call.py to save clean JSON.**
+Priority: user request → `shops[].timezone` → config `timezone` → the site's location when obvious from its name/region (e.g. "Spain Office" → `Europe/Madrid`) → host timezone. Then compute the window **in that timezone**:
 
 ```bash
-# ✅ Correct
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> <tool-name> reports/stepX.json [key=value ...]
-
-# ❌ Wrong — PowerShell redirection has encoding problems
-mcporter call ... > reports/stepX.json
+python <skill-dir>/scripts/time_window.py --tz <IANA tz>     # omit --tz to use the host timezone
 ```
 
-> 💡 mcporter_call.py only extracts the mcporter output and saves it to a file, with no third-party dependencies. It runs `mcporter call <mcp-name>.<tool> ... --output json --raw-strings`, drops the `outputSchema` block, and saves `{"response": {...}}`. If Python is also unavailable, use cmd redirection instead: `cmd /c "mcporter call ... > reports/stepX.json 2>&1"`
->
-> **Exit codes:** `0` OK · `1` mcporter missing/failed or output not JSON · `2` the API answered with a non-zero `response.code` (e.g. `17 illegal access` for a wrong serial number or an invalid API key). The JSON is still saved on exit 2; report the error instead of treating the step as empty.
+It prints `start` (today 00:00), `end` (now — never end of day), `inspection_time` and `stamp`. Record which rule picked the timezone in `analysis.notes`.
 
----
+### 1.3 Classify devices per site (from `deviceList`, filtered by `shopId`)
 
-## Inspection Steps
+- Strip invisible U+200B from `devModel`.
+- `customType` = `ac` → AC, inspect in Step 2.
+- No `ac` device → a `router` / gateway with built-in WLAN (e.g. MSR1104S-W) is inspected in the AC role (`role`: "Router acting as AC / gateway").
+- Cloud APs whose `acSN` equals their own `apSN` in Step 5B are **cloud-managed standalone** APs, not managed by the router; say so in the AC `note`.
+- Several ACs → inspect each one (one `ac[]` entry each).
+- No AC and no router → skip Step 2, `ac: []`, explain in notes.
+- Offline devices: still list them; `getDeviceRunInfo` may fail → record the error, leave cpu/memory/disk `null`.
 
-### Step 1: Get the site shopId and AC information (serial; must complete first)
+## Steps 2-5: Collect data in parallel (per site)
 
-**Tool:** `getallshopsanddevofuser` (no parameters!)
+Steps 2/3/4/5 are independent: **issue all calls at once** (and for all sites at once when inspecting several).
 
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getallshopsanddevofuser reports/step1.json
-```
+| Step | Tool | Parameters | Extract |
+|---|---|---|---|
+| 2 AC health (each AC) | `getDeviceRunInfo` | `devSN` | `cpuRatio`, `memoryRatio`, `diskRatio`, `speed_up`, `speed_down`, `devAddress` |
+| 3A Problem distribution | `getProblemDistribute` | `shopId`, `startTime`, `endTime`, `timezone` | all `data[]` categories (see below) |
+| 3B Access success | `getHistoryAccessSucOneDay` | same as 3A | `data[]` → `RT`/`IUS` samples |
+| 4 Problem reasoning | `getShopNetworkProblem` | `shopId` | `data.data[]` items |
+| 5A AP count | `getCurrentApCount` | `shopId` | `online`, `offline`, `total` |
+| 5B AP list | `getApRegularMatch` | `shopId`, `dim` | `detail[]`: `Ss==2` → offline AP names; `acSN` for device roles |
 
-**LLM processing:** Extract from step1.json:
-- Match the site name specified by the user (from config.json or user input) → `shopId`
-- Devices with customType=ac under that site → `devSN`, `devModel`, `devAlias`, `status`, `softVer`
-- **No customType=ac device?** Small sites often use a router with a built-in AC (e.g. MSR1104S-W, customType=router). Use that device for Step 2 and note "acts as AC" in the report. Confirm with Step 5B: the APs' `acSN` is the device acting as AC. If no device fits, skip Step 2 and set `ac: []`.
-- `devModel` may contain an invisible zero-width character (U+200B); strip it.
-- Name matching: match `shops[].name` against `shopName` case-insensitively; a unique partial match (e.g. "Spain" → "Spain Office") is acceptable, but state the match in the report notes.
-- If the site name cannot be matched, list all sites for the user to choose from
+Pass `shopId` as a string. Times use `yyyy-MM-dd HH:mm:ss.SSS` from `time_window.py`.
 
-> 💡 The shopId is fetched live from the API in this step; config.json does not need it pre-filled.
+**Rules that keep the result correct on any site:**
+- **3A duplicates:** the API may return every category twice, sometimes with **different** counts. Pass all entries; `gen_report.py` keeps the highest count per type and adds a note listing the types that differed.
+- **3B empty `data[]`** = no access attempts in the window → "No data", not a failure.
+- **5A total** may include routers with built-in WLAN; mention it in notes when that happens.
+- **5B completeness:** start with `dim=1` (H3C serial numbers contain "1"). If `totalCount > len(detail)`, query again with `dim` = `0`,`2`…`9` and merge by `apSN` until the union reaches `totalCount`; if it still falls short, set `ap.list_complete=false`.
+- **Failed call** (error, non-zero `code`, timeout): retry once; if it still fails, set that section to `null` in the data file (the report shows "Not collected") and record the error message in `analysis.notes`. Never abort the whole inspection for one failed call, and never fill in guessed values.
 
-### Steps 2-5: Collect data in parallel
+**Rating thresholds** (applied by the script):
 
-> ⚠️ Steps 2/3/4/5 have no dependencies on each other and **must be started at the same time**.
-
-#### Step 2: AC health
-
-**Tool:** `getDeviceRunInfo`
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getDeviceRunInfo reports/step2.json devSN=<AC serial number>
-```
-
-**LLM extracts:** cpuRatio / memoryRatio / diskRatio / speed_up / speed_down
-
-**Evaluation criteria:**
 | Check item | 🟢 Normal | ⚠️ Needs attention | 🔴 Critical |
-|--------|---------|-----------|---------|
+|---|---|---|---|
 | CPU | ≤50% | ≤70% | >70% |
 | Memory | ≤70% | ≤85% | >85% |
 | Disk | ≤70% | ≤85% | >85% |
-
-#### Step 3: Problem distribution + access success rate (2 calls in parallel)
-
-**Tool A:** `getProblemDistribute`
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getProblemDistribute reports/step3a.json shopId=<site ID> "startTime=<today 00:00:00.000>" "endTime=<current time>" timezone=<timezone>
-```
-
-**LLM extracts:** The TOP 5 problem types sorted by times in descending order, with their subcategory details
-
-> ⚠️ The API may return every category **twice** in `data[]`. Keep one entry per `type` before ranking.
-
-**Tool B:** `getHistoryAccessSucOneDay` (same parameters as above)
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getHistoryAccessSucOneDay reports/step3b.json shopId=<site ID> "startTime=<today 00:00:00.000>" "endTime=<current time>" timezone=<timezone>
-```
-
-**LLM extracts:** The lowest access success rate, the time it occurred, and the number of time periods below 98%
-
-> ⚠️ **Time window rules (Step 3A and 3B):**
-> - `timezone` = config.json `timezone` (default `Asia/Shanghai`). Returned `RT` times are in that timezone.
-> - `<today>` and `<current time>` must be computed **in that timezone**, not the machine's local time.
-> - `endTime` must be the **current time**, never the end of the day: with a future `endTime`, getHistoryAccessSucOneDay returns samples stamped with times that have not happened yet.
-> - An empty `data[]` means no access attempts in the window → rating "No data", not a failure.
-
-**Evaluation:** ≥98% 🟢 | ≥95% ⚠️ | <95% 🔴
-
-#### Step 4: Cloudnet problem reasoning
-
-**Tool:** `getShopNetworkProblem`
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getShopNetworkProblem reports/step4.json shopId=<site ID>
-```
-
-**LLM extracts:**
-- `data.summary[]` → count high-risk (3) / medium-risk (2) items by alarmLevel
-- `data.data[]` → group by alarmLevel and extract reasoningType / count / reasoningCategory / suggestion / status
-
-#### Step 5: AP online rate (2 calls in parallel)
-
-**Tool A:** `getCurrentApCount`
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getCurrentApCount reports/step5a.json shopId=<site ID>
-```
-
-**LLM extracts:** online / offline / total, and calculates the online rate
-
-**Tool B:** `getApRegularMatch`
-
-```bash
-python <skill-dir>/scripts/mcporter_call.py <mcp-name> getApRegularMatch reports/step5b.json shopId=<site ID> dim=1
-```
-
-**LLM extracts:** Filter the APs with Ss=2 from detail[] and extract the apName list
-
-> 💡 `dim=1` is a fuzzy match on AP name/SN/MAC/IP; it matches H3C serial numbers, which contain "1". If `totalCount` is larger than `len(detail)`, the offline list may be partial: set `ap.list_complete=false`.
-
-**Evaluation:** ≥98% 🟢 | ≥95% ⚠️ | <95% 🔴
-
-### Step 6: Assemble the data + generate the dual-format report
-
-#### 6.1 Assemble the structured inspection data
-
-The LLM reads the step1~step5b JSON files one by one, extracts the key fields from `response.data`, and assembles them into a JSON file that conforms to the format in `references/data-format.md`.
-
-```bash
-# Write the structured data to reports/Inspection_Data_<site>_<yyyyMMdd_HHmm>.json
-```
-
-> 📄 Data format reference: read `<skill-dir>/references/data-format.md` for the complete JSON schema **before** writing the file.
->
-> The data file holds the raw numbers (the script computes ratings, the TOP 5 and the access statistics) plus an `analysis` block with all report prose written by the LLM: executive summary, P0/P1/P2 priorities, short/medium/long-term remediation, conclusion and data notes.
-
-**Alarm level evaluation criteria:**
-
-| Check item | 🟢 Normal | ⚠️ Needs attention | 🔴 Critical |
-|--------|---------|-----------|---------|
-| CPU | ≤50% | ≤70% | >70% |
-| Memory | ≤70% | ≤85% | >85% |
-| Disk | ≤70% | ≤85% | >85% |
-| Access success rate | ≥98% | ≥95% | <95% |
+| Access success rate (lowest sample) | ≥98% | ≥95% | <95% |
 | AP online rate | ≥98% | ≥95% | <95% |
 
-#### 6.2 Generate the MD + DOCX dual-format report
+## Step 6: Assemble data and generate the reports
+
+### 6.1 Write one data file per site
+
+Read `<skill-dir>/references/data-format.md` **before** writing. Save `<out>/Inspection_Data_<site>_<stamp>.json` (UTF-8). It holds the raw numbers plus the `analysis` block (all report prose), written in the report language:
+
+- Language: user request → config `language` → the language the user is writing in (`zh` for Chinese, else `en`). Set `meta.language`. Keep technical terms in English (CPU, RSSI, AP, AC, SSID, Portal, DHCP, DNS…).
+- Prose must be based on the collected data only. If the session already contains related findings (e.g. a client diagnosis of this site), they may be cited, labelled as such in `notes`.
+
+### 6.2 Generate
 
 ```bash
-python <skill-dir>/scripts/gen_report.py --data-file reports/Inspection_Data_<site>_<time>.json --output-dir reports/
+python <skill-dir>/scripts/gen_report.py --data-file <out>/Inspection_Data_<siteA>_<stamp>.json [--data-file <out>/Inspection_Data_<siteB>_<stamp>.json ...] --output-dir <out> [--lang zh|en] [--no-docx]
 ```
 
-This script outputs both (exit code 3 = python-docx missing; the MD report is still written):
-- MD report: `reports/Inspection_Report_<site>_<timestamp>.md`
-- DOCX report: `reports/Inspection_Report_<site>_<timestamp>.docx`
+Outputs `Inspection_Report_<site>_<timestamp>.md/.docx` per site, and `Inspection_Summary_<timestamp>.md` when more than one site is given. Exit code 3 = python-docx missing (MD still written).
 
-**Report structure (6 chapters):**
-```
-1. Executive Summary → key metrics + risk overview
-2. Health Assessment → AC health + problem distribution + access success rate + AP online rate
-3. Detailed Problem Analysis → details of high-risk / medium-risk problems
-4. Problem Handling Priority → P0/P1/P2 grading
-5. Remediation Plan → short term / medium term / long term
-6. Inspection Conclusion → overall assessment + key risks + trend recommendations
-```
+Report structure (6 chapters): 1 Executive Summary · 2 Health Assessment (AC / problem distribution / access success / AP online) · 3 Detailed Problem Analysis · 4 Handling Priority (P0/P1/P2) · 5 Remediation (short/medium/long term) · 6 Conclusion (+ data notes).
 
-**Report writing requirements:**
-- Entirely in English, with terms/abbreviations kept in English (CPU, RSSI, AP, AC, SSID, Portal, DHCP, SNMP, ARP, DNS, MTU, MSS, MCP, Cloudnet, mcporter, etc.)
-- First page: the title "Wireless Network O&M Inspection Report (Lite Edition)" + site name + inspection time + inspection tool name
-- Rate each item according to the alarm level evaluation criteria
-- Problem analysis must be based on actual data; do not fabricate anything
-- The remediation plan must give targeted recommendations based on the actual problems
+### 6.3 Clean up (mcporter transport only)
 
-#### 6.3 Delete the temporary step files (mandatory)
-
-The `step*.json` files are only intermediate API results. Once both reports exist, delete them (works in PowerShell and bash):
+After `gen_report.py` succeeded, delete the intermediate API files; keep `Inspection_Data_*` and `Inspection_Report_*`:
 
 ```bash
-python -c "import glob, os; [os.remove(f) for f in glob.glob('reports/step*.json')]"
+python -c "import glob, os; [os.remove(f) for f in glob.glob(r'<out>/step*.json')]"
 ```
 
-- Run this **only after gen_report.py exited 0** and both the MD and DOCX paths were printed. If report generation failed, keep the step files so the run can be fixed and re-run without calling the APIs again.
-- Delete only `reports/step*.json`. Keep `Inspection_Data_*.json` (the structured data behind the report) and all `Inspection_Report_*` files.
+If generation failed, keep them so the run can be fixed without calling the APIs again.
 
-#### 6.4 Output the inspection summary to the user (mandatory)
-
-> ⚠️ **After the report is generated, you must output a summary in the chat interface; do not just say "the report has been generated".**
+### 6.4 Summarize in chat (mandatory, in the user's language)
 
 ```
-📋 Inspection complete — {site name}
+📋 Inspection complete — {site}
 
-🏥 AC health: CPU {x}% / Memory {x}% / Disk {x}% — {🟢 Normal / ⚠️ Needs attention / 🔴 Critical}
-📊 Access success rate: {min}%~100% — {🟢/⚠️/🔴}
-📡 AP online rate: {rate}% (online {on} / total {total}) — {🟢/⚠️/🔴}
+🏥 AC health: CPU {x}% / Memory {x}% / Disk {x}% — {rating}
+📊 Access success rate: {min}%~100% — {rating}
+📡 AP online rate: {rate}% ({on}/{total}) — {rating}
 ⚠️ Problems: {h} high-risk / {m} medium-risk
 
-🔴 Requires immediate action:
-  1. {highest-priority problem} — {recommendation}
-  2. {second-highest-priority problem} — {recommendation}
+🔴 / 🔶 Act first:
+  1. {top item} — {action}
+  2. …
 
-📁 Reports generated:
-  MD: {full path of the md file}
-  DOCX: {full path of the docx file}
+📁 Reports: MD {path} · DOCX {path}
 ```
+
+For several sites: one line per site (overall rating + top issue), the summary file path, then details only for sites rated ⚠️ or 🔴.
 
 ---
 
-## Execution Flowchart
+## Execution flow
 
 ```
-Step 0: Read config.json → mcporter check → MCP connection configuration → site confirmation
-        │
-        ▼
-Step 1: Get shopId + devSN (serial) → step1.json
-        │
-        ├──────────┬──────────┬──────────┐
-        ▼          ▼          ▼          ▼
-     Step 2      Step 3      Step 4      Step 5      ← parallel
-     step2.json  step3a/b   step4.json  step5a/b
-        │          │          │          │
-        └──────────┴──────────┴──────────┘
-                        │
-                        ▼
-Step 6: LLM extracts data → assemble structured JSON → gen_report.py
-        │
-        ├── reports/Inspection_Report_XXX.md    (MD format)
-        └── reports/Inspection_Report_XXX.docx  (DOCX format)
-                        │
-                        ▼
-              Delete reports/step*.json
-                        │
-                        ▼
-              Output the inspection summary
+Step 0: config (optional) → transport: direct MCP | mcporter → python-docx
+Step 1: getallshopsanddevofuser → resolve sites → timezone + time_window.py → classify devices
+Steps 2-5 (parallel, all sites): getDeviceRunInfo ×AC · getProblemDistribute · getHistoryAccessSucOneDay
+                                 · getShopNetworkProblem · getCurrentApCount · getApRegularMatch
+Step 6: Inspection_Data_<site>.json → gen_report.py → MD + DOCX (+ summary) → cleanup → chat summary
 ```
 
-## File Structure
+## File structure
 
 ```
-skills/cloudnet-wlan-inspection-lite/
-├── SKILL.md                        # This file
-├── config.json                     # API key + site configuration (filled in by the user)
+cloudnet-wlan-inspection-lite/
+├── SKILL.md
+├── config.json            # optional, user settings (may hold the API key)
+├── config.example.json    # all fields with examples
 ├── scripts/
-│   ├── mcporter_call.py            # mcporter output extraction (no third-party dependencies)
-│   └── gen_report.py               # MD + DOCX dual-format report generation (depends on python-docx)
+│   ├── mcporter_call.py   # mcporter fallback: call one tool, save clean JSON
+│   ├── time_window.py     # today 00:00 → now in a timezone (host tz detection)
+│   └── gen_report.py      # ratings + MD/DOCX reports, en/zh, multi-site summary
 └── references/
-    └── data-format.md              # Structured JSON format definition for the inspection data
+    └── data-format.md     # data file schema
 ```
 
-## config.json Field Reference
+## config.json field reference (all optional)
 
-| Field | Type | Required | Description |
-|------|------|------|------|
-| `mcporter_name` | string | ✅ | The connection name used with mcporter config add |
-| `api_key` | string | ✅ | Cloudnet API key (obtained from the Cloudnet platform) |
-| `timezone` | string | | IANA timezone of the site, default `Asia/Shanghai` |
-| `shops` | array | ✅ | List of sites; each site contains name |
-| `shops[].name` | string | ✅ | Site name (the shopId is fetched automatically via the API during the inspection) |
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `shops` | array \| `"all"` | ask the user | `[{ "name": "...", "timezone": "..." }]`; `"all"` inspects every site |
+| `timezone` | string | site location / host tz | IANA name used for sites without their own `timezone` |
+| `language` | `en` \| `zh` | user's language | Report language |
+| `output_dir` | string | `reports` | Report directory, relative to the working directory |
+| `mcporter_name` | string | `Cloudnet` | mcporter connection name (mcporter transport only) |
+| `api_key` | string | — | Cloudnet API key (mcporter transport only) |
+| `base_url` | string | `https://cloudnet1.h3c.com` | Cloudnet platform address (mcporter transport only) |
