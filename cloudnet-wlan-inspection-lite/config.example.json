@@ -7,6 +7,5 @@
   "language": "zh",
   "output_dir": "reports",
   "mcporter_name": "Cloudnet",
-  "api_key": "fill in your Cloudnet API key (only needed for the mcporter transport)",
   "base_url": "https://cloudnet1.h3c.com"
 }
