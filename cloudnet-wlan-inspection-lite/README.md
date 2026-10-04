@@ -2,13 +2,13 @@
 
 ## Overview
 
-A quick day-to-day health check for H3C Cloudnet wireless sites (version V0.1.0). The skill inspects one, several or all Cloudnet sites through the Cloudnet MCP interfaces — direct MCP tools when the session has them, the `mcporter` CLI as a fallback — collects AC health, problem distribution, access success rate, Cloudnet problem reasoning and AP online rate, and produces a **"Wireless Network O&M Inspection Report (Lite Edition)"** / **"无线网络运维巡检报告（精简版）"** in Markdown and DOCX, in English or Chinese. When several sites are inspected, a multi-site summary is produced as well.
+A quick day-to-day health check for H3C Cloudnet wireless sites (version V0.1.0). The skill inspects one, several or all Cloudnet sites through the Cloudnet MCP interfaces — direct MCP tools when the session has them, the `mcporter` CLI as a fallback — collects AC health, problem distribution, access success rate, Cloudnet problem reasoning and AP online rate, and produces a **"Wireless Network O&M Inspection Report (Lite Edition)"** in Markdown and DOCX, in English or Chinese. When several sites are inspected, a multi-site summary is produced as well.
 
 Design principle: the LLM extracts and evaluates the data; the scripts only compute ratings and format the reports.
 
 ## When to Use This Skill
 
-Trigger words: *inspection*, *lite inspection*, *WLAN inspection*, *wireless network inspection*, *cloudnet inspection*, *巡检*, *巡检报告*, *无线巡检*.
+Trigger words: *inspection*, *lite inspection*, *WLAN inspection*, *wireless network inspection*, *cloudnet inspection*.
 
 ## Prerequisites
 
